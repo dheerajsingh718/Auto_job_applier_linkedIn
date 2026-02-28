@@ -1,18 +1,18 @@
 '''
-Author:     Sai Vignesh Golla
-LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
+Author:     Dheeraj Singh
+LinkedIn:   https://www.linkedin.com/in/dheerajshankarsingh/
 
 Copyright (C) 2024 Sai Vignesh Golla
 
 License:    GNU Affero General Public License
             https://www.gnu.org/licenses/agpl-3.0.en.html
             
-GitHub:     https://github.com/GodsScion/Auto_job_applier_linkedIn
+GitHub:     https://github.com/dheerajsingh718/Auto_job_applier_linkedIn
 
-version:    2024.11.28.16.00
+Support me: https://github.com/sponsors/dheerajsingh718
+
+version:    26.01.20.5.08
 '''
-
-
 ###################################################### CONFIGURE YOUR TOOLS HERE ######################################################
 
 
@@ -27,16 +27,16 @@ last_name = "Golla"                # Your last name in quotes Eg: "Last", "Golla
 phone_number = "9876543210"        # Enter your 10 digit number in quotes Eg: "9876543210"
 
 # What is your current city?
-current_city = ""                  # Los Angeles, San Francisco, etc.
+current_city = "Jersey City"                  # Los Angeles, San Francisco, etc.
 '''
 Note: If left empty as "", the bot will fill in location of jobs location.
 '''
 
 # Address, not so common question but some job applications make it required!
-street = "123 Main Street"
-state = "STATE"
-zipcode = "12345"
-country = "Will Let You Know When Established"
+street = ""
+state = "New Jersey"
+zipcode = ""
+country = "United States"
 
 ## US Equal Opportunity questions
 # What is your ethnicity or race? If left empty as "", tool will not answer the question. However, note that some companies make it compulsory to be answered
@@ -81,6 +81,6 @@ As an independent developer, I pour my heart and soul into creating tools like t
 Your support, whether through donations big or small or simply spreading the word, means the world to me and helps keep this project alive and thriving.
 
 Gratefully yours 🙏🏻,
-Sai Vignesh Golla
+Dheeraj Singh
 '''
 ############################################################################################################

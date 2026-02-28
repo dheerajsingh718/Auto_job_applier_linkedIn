@@ -1,15 +1,15 @@
 '''
-Author:     Sai Vignesh Golla
-LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
+Author:     Dheeraj Singh
+LinkedIn:   https://www.linkedin.com/in/dheerajshankarsingh/
 
 Copyright (C) 2024 Sai Vignesh Golla
 
 License:    GNU Affero General Public License
             https://www.gnu.org/licenses/agpl-3.0.en.html
             
-GitHub:     https://github.com/GodsScion/Auto_job_applier_linkedIn
+GitHub:     https://github.com/dheerajsingh718/Auto_job_applier_linkedIn
 
-Support me: https://github.com/sponsors/GodsScion
+Support me: https://github.com/sponsors/dheerajsingh718
 
 version:    26.01.20.5.08
 '''
@@ -66,8 +66,6 @@ YOU DON'T HAVE TO EDIT THIS FILE, IF YOU ADDED YOUR DEFAULT RESUME.
 
 
 
-
-
 ############################################################################################################
 '''
 THANK YOU for using my tool 😊! Wishing you the best in your job hunt 🙌🏻!
@@ -81,6 +79,6 @@ As an independent developer, I pour my heart and soul into creating tools like t
 Your support, whether through donations big or small or simply spreading the word, means the world to me and helps keep this project alive and thriving.
 
 Gratefully yours 🙏🏻,
-Sai Vignesh Golla
+Dheeraj Singh
 '''
 ############################################################################################################

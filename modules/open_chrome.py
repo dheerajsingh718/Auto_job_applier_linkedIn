@@ -17,6 +17,8 @@ version:    26.01.20.5.08
 from modules.helpers import get_default_temp_profile, make_directories
 from config.settings import run_in_background, stealth_mode, disable_extensions, safe_mode, file_name, failed_file_name, logs_folder_path, generated_resume_path
 from config.questions import default_resume_path
+import subprocess
+import re
 if stealth_mode:
     import undetected_chromedriver as uc
 else: 
@@ -27,6 +29,28 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from modules.helpers import find_default_profile_directory, critical_error_log, print_lg
 from selenium.common.exceptions import SessionNotCreatedException
+
+def get_installed_chrome_major_version() -> int | None:
+    """
+    Detect installed Chrome major version on macOS/Linux.
+    Returns the major version integer or None if detection fails.
+    """
+    commands = [
+        ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "--version"],
+        ["google-chrome", "--version"],
+        ["google-chrome-stable", "--version"],
+        ["chromium", "--version"],
+        ["chromium-browser", "--version"],
+    ]
+    for cmd in commands:
+        try:
+            output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True).strip()
+            match = re.search(r"(\d+)\.", output)
+            if match:
+                return int(match.group(1))
+        except Exception:
+            continue
+    return None
 
 def createChromeSession(isRetry: bool = False):
     make_directories([file_name,failed_file_name,logs_folder_path+"/screenshots",default_resume_path,generated_resume_path+"/temp"])
@@ -50,7 +74,13 @@ def createChromeSession(isRetry: bool = False):
         # except (FileNotFoundError, PermissionError) as e: 
         #     print_lg("(Undetected Mode) Got '{}' when using pre-installed ChromeDriver.".format(type(e).__name__)) 
             print_lg("Downloading Chrome Driver... This may take some time. Undetected mode requires download every run!")
-            driver = uc.Chrome(options=options)
+            detected_major = get_installed_chrome_major_version()
+            if detected_major:
+                print_lg(f"Detected local Chrome major version: {detected_major}")
+                driver = uc.Chrome(options=options, version_main=detected_major)
+            else:
+                print_lg("Could not detect local Chrome version. Falling back to uc default version selection.")
+                driver = uc.Chrome(options=options)
     else: driver = webdriver.Chrome(options=options) #, service=Service(executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe"))
     driver.maximize_window()
     wait = WebDriverWait(driver, 5)

@@ -1,15 +1,15 @@
 '''
-Author:     Sai Vignesh Golla
-LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
+Author:     Dheeraj Singh
+LinkedIn:   https://www.linkedin.com/in/dheerajshankarsingh/
 
 Copyright (C) 2024 Sai Vignesh Golla
 
 License:    GNU Affero General Public License
             https://www.gnu.org/licenses/agpl-3.0.en.html
             
-GitHub:     https://github.com/GodsScion/Auto_job_applier_linkedIn
+GitHub:     https://github.com/dheerajsingh718/Auto_job_applier_linkedIn
 
-Support me: https://github.com/sponsors/GodsScion
+Support me: https://github.com/sponsors/dheerajsingh718
 
 version:    26.01.20.5.08
 '''
@@ -33,7 +33,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support.select import Select
 from selenium.webdriver.remote.webelement import WebElement
-from selenium.common.exceptions import NoSuchElementException, ElementClickInterceptedException, NoSuchWindowException, ElementNotInteractableException, WebDriverException
+from selenium.common.exceptions import NoSuchElementException, ElementClickInterceptedException, NoSuchWindowException, ElementNotInteractableException, WebDriverException, StaleElementReferenceException, InvalidSessionIdException
 
 from config.personals import *
 from config.questions import *
@@ -72,6 +72,7 @@ full_name = first_name + " " + middle_name + " " + last_name if middle_name else
 
 useNewResume = True
 randomly_answered_questions = set()
+uploaded_resumes: set[str] = set()
 
 tabs_count = 1
 easy_applied_count = 0
@@ -278,6 +279,83 @@ def get_page_info() -> tuple[WebElement | None, int | None]:
     return pagination_element, current_page
 
 
+def get_job_listings(timeout: int = 20) -> list[WebElement]:
+    '''
+    Collects job card elements using multiple selectors because LinkedIn often changes DOM attributes.
+    Returns a list of job-card-like elements; returns [] if no cards are found within timeout.
+    '''
+    selectors = [
+        "//li[@data-occludable-job-id]",
+        "//div[contains(@class,'job-card-container') and @data-job-id]",
+        "//li[contains(@class,'scaffold-layout__list-item') and .//a[contains(@href,'/jobs/view/')]]"
+    ]
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        for selector in selectors:
+            listings = driver.find_elements(By.XPATH, selector)
+            if listings:
+                return listings
+        sleep(1)
+    return []
+
+
+def wait_for_job_details(job_id: str | None = None, title_hint: str | None = None, timeout: int = 12) -> bool:
+    '''
+    Waits for the right-side job details panel (or job page details) to load after selecting a card.
+    Returns True if a plausible job details area is present, else False.
+    '''
+    panel_selectors = [
+        "//main[contains(@class,'scaffold-layout__detail')]",
+        "//div[contains(@class,'jobs-search__job-details--wrapper')]",
+        "//section[contains(@class,'jobs-details')]",
+        "//div[contains(@class,'jobs-details__main-content')]",
+    ]
+    title_selectors = [
+        "//h1[contains(@class,'job-details-jobs-unified-top-card__job-title')]",
+        "//h1[contains(@class,'t-24')]",
+        "//a[contains(@class,'jobs-unified-top-card__job-title')]",
+    ]
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        try:
+            for selector in panel_selectors:
+                if driver.find_elements(By.XPATH, selector):
+                    if job_id and (f"/jobs/view/{job_id}" in driver.current_url or f"currentJobId={job_id}" in driver.current_url):
+                        return True
+                    for title_selector in title_selectors:
+                        titles = driver.find_elements(By.XPATH, title_selector)
+                        if titles:
+                            loaded_title = titles[0].text.strip()
+                            if not title_hint or not loaded_title or title_hint.lower()[:25] in loaded_title.lower():
+                                return True
+                    if not job_id and not title_hint:
+                        return True
+        except StaleElementReferenceException:
+            pass
+        sleep(1)
+    return False
+
+
+def get_first_nonempty_text(selectors: list[tuple[str, str]], timeout: int = 8) -> str | None:
+    '''
+    Tries multiple selectors and returns the first non-empty text found.
+    Selector tuples are (By strategy, locator).
+    '''
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        for by, locator in selectors:
+            try:
+                elements = driver.find_elements(by, locator)
+                for element in elements:
+                    text = element.text.strip()
+                    if text:
+                        return text
+            except StaleElementReferenceException:
+                continue
+        sleep(1)
+    return None
+
+
 
 def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_jobs: set) -> tuple[str, str, str, str, str, bool]:
     '''
@@ -291,19 +369,42 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
     * skip: A boolean flag to skip this job
     '''
     skip = False
-    job_details_button = job.find_element(By.TAG_NAME, 'a')  # job.find_element(By.CLASS_NAME, "job-card-list__title")  # Problem in India
-    scroll_to_view(driver, job_details_button, True)
-    job_id = job.get_dom_attribute('data-occludable-job-id')
-    title = job_details_button.text
-    title = title[:title.find("\n")]
+    try:
+        job_details_button = job.find_element(By.TAG_NAME, 'a')  # job.find_element(By.CLASS_NAME, "job-card-list__title")  # Problem in India
+        scroll_to_view(driver, job_details_button, True)
+        job_id = job.get_dom_attribute('data-occludable-job-id') or job.get_dom_attribute('data-job-id')
+        job_link = job_details_button.get_attribute("href") or ""
+        if not job_id:
+            match = re.search(r"/jobs/view/(\d+)", job_link)
+            job_id = match.group(1) if match else "Unknown"
+        title = job_details_button.text.strip()
+        if "\n" in title:
+            title = title[:title.find("\n")]
+        if not title:
+            title = job_details_button.get_attribute("aria-label") or "Unknown Title"
+    except StaleElementReferenceException:
+        print_lg("Job card became stale before reading details. Skipping this card.")
+        return ("Unknown", "Unknown", "Unknown", "Unknown", "Unknown", True)
     # company = job.find_element(By.CLASS_NAME, "job-card-container__primary-description").text
     # work_location = job.find_element(By.CLASS_NAME, "job-card-container__metadata-item").text
-    other_details = job.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
-    index = other_details.find(' · ')
-    company = other_details[:index]
-    work_location = other_details[index+3:]
-    work_style = work_location[work_location.rfind('(')+1:work_location.rfind(')')]
-    work_location = work_location[:work_location.rfind('(')].strip()
+    try:
+        other_details = job.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
+        index = other_details.find(' · ')
+        if index > -1:
+            company = other_details[:index]
+            work_location = other_details[index+3:]
+        else:
+            company = other_details.strip()
+            work_location = "Unknown"
+    except Exception:
+        company = "Unknown Company"
+        work_location = "Unknown"
+
+    if "(" in work_location and ")" in work_location:
+        work_style = work_location[work_location.rfind('(')+1:work_location.rfind(')')]
+        work_location = work_location[:work_location.rfind('(')].strip()
+    else:
+        work_style = "Unknown"
     
     # Skip if previously rejected due to blacklist or already applied
     if company in blacklisted_companies:
@@ -319,12 +420,22 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
     except: pass
     try: 
         if not skip: job_details_button.click()
+    except StaleElementReferenceException:
+        print_lg(f'Job card went stale while clicking "{title} | {company}". Job ID: {job_id}. Skipping.')
+        return (job_id, title, company, work_location, work_style, True)
     except Exception as e:
-        print_lg(f'Failed to click "{title} | {company}" job on details button. Job ID: {job_id}!') 
-        # print_lg(e)
-        discard_job()
-        job_details_button.click() # To pass the error outside
-    buffer(click_gap)
+        print_lg(f'Failed to click "{title} | {company}" job on details button. Job ID: {job_id}! Falling back to direct navigation.')
+        if job_link:
+            try:
+                driver.get(job_link)
+            except Exception:
+                return (job_id, title, company, work_location, work_style, True)
+        else:
+            return (job_id, title, company, work_location, work_style, True)
+    if not wait_for_job_details(job_id, title):
+        print_lg(f'Job details did not finish loading for "{title} | {company}". Skipping.')
+        return (job_id, title, company, work_location, work_style, True)
+    human_pace()
     return (job_id,title,company,work_location,work_style,skip)
 
 
@@ -382,17 +493,22 @@ def get_job_description(
     - `skipReason: str | None`
     - `skipMessage: str | None`
     '''
+    jobDescription = "Unknown"
+    experience_required = "Unknown"
+    skip = False
+    skipReason = None
+    skipMessage = None
     try:
-        ##> ------ Dheeraj Deshwal : dheeraj9811 Email:dheeraj20194@iiitd.ac.in/dheerajdeshwal9811@gmail.com - Feature ------
-        jobDescription = "Unknown"
-        ##<
-        experience_required = "Unknown"
         found_masters = 0
-        jobDescription = find_by_class(driver, "jobs-box__html-content").text
+        jobDescription = get_first_nonempty_text([
+            (By.CLASS_NAME, "jobs-box__html-content"),
+            (By.CLASS_NAME, "jobs-description__content"),
+            (By.CLASS_NAME, "jobs-description-content__text"),
+            (By.XPATH, "//div[contains(@class,'jobs-description')]"),
+            (By.XPATH, "//section[contains(@class,'show-more-less-html')]"),
+            (By.XPATH, "//div[contains(@class,'jobs-details__main-content')]"),
+        ], timeout=10) or "Unknown"
         jobDescriptionLow = jobDescription.lower()
-        skip = False
-        skipReason = None
-        skipMessage = None
         for word in bad_words:
             if word.lower() in jobDescriptionLow:
                 skipMessage = f'\n{jobDescription}\n\nContains bad word "{word}". Skipping this job!\n'
@@ -427,17 +543,139 @@ def get_job_description(
 def upload_resume(modal: WebElement, resume: str) -> tuple[bool, str]:
     try:
         modal.find_element(By.NAME, "file").send_keys(os.path.abspath(resume))
-        return True, os.path.basename(default_resume_path)
+        return True, os.path.basename(resume)
     except: return False, "Previous resume"
+
+def get_resume_for_job(title: str) -> str:
+    '''
+    Selects a resume based on job-title keywords from `role_based_resumes`.
+    Falls back to `default_resume_path`.
+    '''
+    title_low = (title or "").lower()
+    try:
+        for keywords, resume_path in role_based_resumes.items():
+            if not resume_path:
+                continue
+            keyword_list = [keyword.strip().lower() for keyword in keywords.split(",") if keyword.strip()]
+            if any(keyword in title_low for keyword in keyword_list):
+                return resume_path
+    except Exception:
+        pass
+    return default_resume_path
 
 # Function to answer common questions for Easy Apply
 def answer_common_questions(label: str, answer: str) -> str:
-    if 'sponsorship' in label or 'visa' in label: answer = require_visa
+    citizenship = us_citizenship.strip().lower()
+    if 'sponsorship' in label or 'visa' in label:
+        answer = require_visa
+    elif (
+        'authorized to lawfully work' in label
+        or 'authorized to work' in label
+        or 'lawfully work' in label
+        or 'work authorization' in label
+    ):
+        if 'seeking work authorization' in citizenship:
+            answer = "No"
+        elif citizenship:
+            answer = "Yes"
+    elif (
+        ('hear' in label and 'about' in label)
+        or 'how did you hear' in label
+        or 'source of' in label
+        or 'source' in label
+        or 'referral source' in label
+    ):
+        answer = "LinkedIn"
     return answer
+
+def should_leave_for_manual_help(label: str) -> bool:
+    '''
+    When manual help is enabled, unknown questions should be left untouched
+    so the user can edit them and let the bot continue afterward.
+    '''
+    return pause_at_failed_question
+
+def location_answer_for_label(label: str, work_location: str) -> str:
+    '''
+    Returns a stable answer for location/residence questions.
+    '''
+    if 'country' in label:
+        return country
+    if 'state' in label or 'province' in label or 'region' in label:
+        return state
+    if 'zip' in label or 'postal' in label or 'code' in label:
+        return zipcode
+    if 'city' in label or 'town' in label:
+        return current_city if current_city else work_location
+    if 'reside' in label or 'residence' in label or 'live' in label:
+        if current_city and state:
+            return f"{current_city}, {state}"
+        return current_city if current_city else work_location
+    return current_city if current_city else work_location
+
+def human_pace(extra_seconds: int = 0) -> None:
+    '''
+    Adds a more human-like delay on top of click_gap.
+    '''
+    buffer(max(click_gap, 3) + extra_seconds)
+
+
+def wait_for_manual_intervention(job_id: int | str, questions_list: set, reason: str = "unanswered questions") -> None:
+    '''
+    Pauses the automation so the user can manually edit the LinkedIn form,
+    then resumes when Enter is pressed in the terminal.
+    '''
+    print_lg(f"Manual intervention required for job {job_id}: {reason}.")
+    if questions_list:
+        print_lg("Questions currently requiring attention:", questions_list)
+    print(
+        "\nManual intervention required.\n"
+        "1. Fill or correct the highlighted fields in the LinkedIn Easy Apply modal.\n"
+        "2. Stay on the same LinkedIn screen. Do not click Back, Next, Review, or Submit.\n"
+        "3. Return to this terminal and press Enter to let the bot continue.\n"
+    )
+    try:
+        input("Press Enter after you finish editing the LinkedIn form...")
+    except EOFError:
+        print_lg("Terminal input was unavailable during manual intervention. Waiting 10 seconds before retrying.")
+        sleep(10)
+
+
+def reached_configured_easy_apply_cap() -> bool:
+    try:
+        return max_daily_easy_apply > 0 and easy_applied_count >= max_daily_easy_apply
+    except Exception:
+        return False
+
+
+def check_for_easy_apply_limit_message(container: WebElement | None = None) -> bool:
+    '''
+    Detect LinkedIn daily/rate limit messaging in the current page or modal.
+    '''
+    global dailyEasyApplyLimitReached
+    limit_markers = (
+        "daily application limit",
+        "daily submissions",
+        "save this job and apply tomorrow",
+        "apply tomorrow",
+        "prevent bots",
+    )
+    search_roots = [container] if container is not None else []
+    search_roots.append(driver)
+
+    for root in search_roots:
+        try:
+            text = root.text.lower()
+            if any(marker in text for marker in limit_markers):
+                dailyEasyApplyLimitReached = True
+                return True
+        except Exception:
+            continue
+    return False
 
 
 # Function to answer the questions for Easy Apply
-def answer_questions(modal: WebElement, questions_list: set, work_location: str, job_description: str | None = None ) -> set:
+def answer_questions(modal: WebElement, questions_list: set, work_location: str, job_description: str | None = None ) -> tuple[set, bool]:
     # Get all questions from the page
      
     all_questions = modal.find_elements(By.XPATH, ".//div[@data-test-form-element]")
@@ -445,6 +683,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
     # all_list_questions = modal.find_elements(By.XPATH, ".//div[@data-test-text-entity-list-form-component]")
     # all_single_line_questions = modal.find_elements(By.XPATH, ".//div[@data-test-single-line-text-form-component]")
     # all_questions = all_questions + all_list_questions + all_single_line_questions
+
+    needs_manual_help = False
 
     for Question in all_questions:
         # Check if it's a select Question
@@ -476,15 +716,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 elif 'proficiency' in label: 
                     answer = 'Professional'
                 # Add location handling
-                elif any(loc_word in label for loc_word in ['location', 'city', 'state', 'country']):
-                    if 'country' in label:
-                        answer = country 
-                    elif 'state' in label:
-                        answer = state
-                    elif 'city' in label:
-                        answer = current_city if current_city else work_location
-                    else:
-                        answer = work_location
+                elif any(loc_word in label for loc_word in ['location', 'city', 'state', 'country', 'reside', 'residence', 'live']):
+                    answer = location_answer_for_label(label, work_location)
                 else: 
                     answer = answer_common_questions(label,answer)
                 try: 
@@ -517,11 +750,21 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                                 foundOption = True
                                 break
                     if not foundOption:
-                        #TODO: Use AI to answer the question need to be implemented logic to extract the options for the question
-                        print_lg(f'Failed to find an option with text "{answer}" for question labelled "{label_org}", answering randomly!')
-                        select.select_by_index(randint(1, len(select.options)-1))
-                        answer = select.first_selected_option.text
-                        randomly_answered_questions.add((f'{label_org} [ {options} ]',"select"))
+                        if should_leave_for_manual_help(label):
+                            print_lg(f'Could not confidently answer dropdown "{label_org}". Leaving it for manual edit.')
+                            needs_manual_help = True
+                            questions_list.add((f'{label_org} [ {options} ]', selected_option, "select", prev_answer))
+                            answer = selected_option
+                            continue
+                        elif any(loc_word in label for loc_word in ['location', 'city', 'state', 'country', 'reside', 'residence', 'live']):
+                            print_lg(f'Failed to match location answer "{answer}" for "{label_org}". Leaving existing selection unchanged to avoid bad random choice.')
+                            answer = selected_option
+                        else:
+                            #TODO: Use AI to answer the question need to be implemented logic to extract the options for the question
+                            print_lg(f'Failed to find an option with text "{answer}" for question labelled "{label_org}", answering randomly!')
+                            select.select_by_index(randint(1, len(select.options)-1))
+                            answer = select.first_selected_option.text
+                            randomly_answered_questions.add((f'{label_org} [ {options} ]',"select"))
             questions_list.add((f'{label_org} [ {options} ]', answer, "select", prev_answer))
             continue
         
@@ -552,7 +795,15 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 elif 'veteran' in label or 'protected' in label: answer = veteran_status
                 elif 'disability' in label or 'handicapped' in label: 
                     answer = disability_status
-                else: answer = answer_common_questions(label,answer)
+                else:
+                    answer = answer_common_questions(label, "")
+                    if not answer:
+                        if should_leave_for_manual_help(label):
+                            print_lg(f'Could not confidently answer radio question "{label_org}". Leaving it for manual edit.')
+                            needs_manual_help = True
+                            questions_list.add((label_org+" ]", prev_answer, "radio", prev_answer))
+                            continue
+                        answer = "Yes"
                 foundOption = try_xp(radio, f".//label[normalize-space()='{answer}']", False)
                 if foundOption: 
                     actions.move_to_element(foundOption).click().perform()
@@ -562,7 +813,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     answer = options_labels[0]
                     for phrase in possible_answer_phrases:
                         for i, option_label in enumerate(options_labels):
-                            if phrase in option_label:
+                            if phrase.lower() in option_label.lower():
                                 foundOption = options[i]
                                 ele = foundOption
                                 answer = f'Decline ({option_label})' if len(possible_answer_phrases) > 1 else option_label
@@ -598,8 +849,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 if 'experience' in label or 'years' in label: answer = years_of_experience
                 elif 'phone' in label or 'mobile' in label: answer = phone_number
                 elif 'street' in label: answer = street
-                elif 'city' in label or 'location' in label or 'address' in label:
-                    answer = current_city if current_city else work_location
+                elif 'city' in label or 'location' in label or 'address' in label or 'reside' in label or 'residence' in label or 'live' in label:
+                    answer = location_answer_for_label(label, work_location)
                     do_actions = True
                 elif 'signature' in label: answer = full_name # 'signature' in label or 'legal name' in label or 'your name' in label or 'full name' in label: answer = full_name     # What if question is 'name of the city or university you attend, name of referral etc?'
                 elif 'name' in label:
@@ -635,9 +886,9 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 elif 'scale of 1-10' in label: answer = confidence_level
                 elif 'headline' in label: answer = linkedin_headline
                 elif ('hear' in label or 'come across' in label) and 'this' in label and ('job' in label or 'position' in label): answer = "https://github.com/GodsScion/Auto_job_applier_linkedIn"
-                elif 'state' in label or 'province' in label: answer = state
-                elif 'zip' in label or 'postal' in label or 'code' in label: answer = zipcode
-                elif 'country' in label: answer = country
+                elif 'state' in label or 'province' in label: answer = location_answer_for_label(label, work_location)
+                elif 'zip' in label or 'postal' in label or 'code' in label: answer = location_answer_for_label(label, work_location)
+                elif 'country' in label: answer = location_answer_for_label(label, work_location)
                 else: answer = answer_common_questions(label,answer)
                 ##> ------ Yang Li : MARKYangL - Feature ------
                 if answer == "":
@@ -659,9 +910,19 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                                 answer = years_of_experience
                         except Exception as e:
                             print_lg("Failed to get AI answer!", e)
+                            if should_leave_for_manual_help(label):
+                                print_lg(f'Could not confidently answer text question "{label_org}". Leaving it for manual edit.')
+                                needs_manual_help = True
+                                questions_list.add((label_org, prev_answer, "text", prev_answer))
+                                continue
                             randomly_answered_questions.add((label_org, "text"))
                             answer = years_of_experience
                     else:
+                        if should_leave_for_manual_help(label):
+                            print_lg(f'Could not confidently answer text question "{label_org}". Leaving it for manual edit.')
+                            needs_manual_help = True
+                            questions_list.add((label_org, prev_answer, "text", prev_answer))
+                            continue
                         randomly_answered_questions.add((label_org, "text"))
                         answer = years_of_experience
                 ##<
@@ -705,9 +966,19 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                                 answer = ""
                         except Exception as e:
                             print_lg("Failed to get AI answer!", e)
+                            if should_leave_for_manual_help(label):
+                                print_lg(f'Could not confidently answer textarea question "{label_org}". Leaving it for manual edit.')
+                                needs_manual_help = True
+                                questions_list.add((label_org, prev_answer, "textarea", prev_answer))
+                                continue
                             randomly_answered_questions.add((label_org, "textarea"))
                             answer = ""
                     else:
+                        if should_leave_for_manual_help(label):
+                            print_lg(f'Could not confidently answer textarea question "{label_org}". Leaving it for manual edit.')
+                            needs_manual_help = True
+                            questions_list.add((label_org, prev_answer, "textarea", prev_answer))
+                            continue
                         randomly_answered_questions.add((label_org, "textarea"))
             text_area.clear()
             text_area.send_keys(answer)
@@ -747,7 +1018,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
     # if 'do you have' in label and 'experience' in label and ' in ' in label -> Get word (skill) after ' in ' from label
     # if 'how many years of experience do you have in ' in label -> Get word (skill) after ' in '
 
-    return questions_list
+    return questions_list, needs_manual_help
 
 
 
@@ -759,7 +1030,7 @@ def external_apply(pagination_element: WebElement, job_id: str, job_link: str, r
     global tabs_count, dailyEasyApplyLimitReached
     if easy_apply_only:
         try:
-            if "exceeded the daily application limit" in driver.find_element(By.CLASS_NAME, "artdeco-inline-feedback__message").text: dailyEasyApplyLimitReached = True
+            check_for_easy_apply_limit_message()
         except: pass
         print_lg("Easy apply failed I guess!")
         if pagination_element != None: return True, application_link, tabs_count
@@ -868,7 +1139,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
     applied_jobs = get_applied_job_ids()
     rejected_jobs = set()
     blacklisted_companies = set()
-    global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume
+    global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume, uploaded_resumes
     current_city = current_city.strip()
 
     if randomize_search_order:  shuffle(search_terms)
@@ -882,22 +1153,39 @@ def apply_to_jobs(search_terms: list[str]) -> None:
         current_count = 0
         try:
             while current_count < switch_number:
-                # Wait until job listings are loaded
-                wait.until(EC.presence_of_all_elements_located((By.XPATH, "//li[@data-occludable-job-id]")))
+                if reached_configured_easy_apply_cap():
+                    dailyEasyApplyLimitReached = True
+                    print_lg(f'Configured Easy Apply cap reached for this run/day ({easy_applied_count}/{max_daily_easy_apply}). Stopping further applications.')
+                    return
 
                 pagination_element, current_page = get_page_info()
 
                 # Find all job listings in current page
-                buffer(3)
-                job_listings = driver.find_elements(By.XPATH, "//li[@data-occludable-job-id]")  
+                job_listings = get_job_listings(timeout=20)
+                if not job_listings:
+                    print_lg("No job cards found on current page. LinkedIn layout may have changed or anti-bot/verification is blocking content.")
+                    try:
+                        body_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+                        if "verify" in body_text or "captcha" in body_text or "security check" in body_text:
+                            print_lg("Detected a possible verification/captcha wall. Please solve it manually, then rerun.")
+                    except Exception:
+                        pass
+                    break
 
-            
-                for job in job_listings:
+                for job_index in range(len(job_listings)):
                     if keep_screen_awake: pyautogui.press('shiftright')
                     if current_count >= switch_number: break
+                    if reached_configured_easy_apply_cap():
+                        dailyEasyApplyLimitReached = True
+                        print_lg(f'Configured Easy Apply cap reached for this run/day ({easy_applied_count}/{max_daily_easy_apply}). Stopping further applications.')
+                        return
                     print_lg("\n-@-\n")
+                    current_job_listings = get_job_listings(timeout=5)
+                    if job_index >= len(current_job_listings):
+                        print_lg("Job list changed while iterating. Refreshing page job scan.")
+                        break
 
-                    job_id,title,company,work_location,work_style,skip = get_job_main_details(job, blacklisted_companies, rejected_jobs)
+                    job_id,title,company,work_location,work_style,skip = get_job_main_details(current_job_listings[job_index], blacklisted_companies, rejected_jobs)
                     
                     if skip: continue
                     # Redundant fail safe check for applied jobs!
@@ -920,6 +1208,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     reposted = False
                     questions_list = None
                     screenshot_name = "Not Available"
+                    selected_resume_path = get_resume_for_job(title)
 
                     try:
                         rejected_jobs, blacklisted_companies, jobs_top_card = check_blacklist(rejected_jobs,job_id,company,blacklisted_companies)
@@ -1001,8 +1290,17 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                         ##<
 
                     uploaded = False
+                    easy_apply_selectors = [
+                        ".//button[contains(@class,'jobs-apply-button') and contains(@class, 'artdeco-button--3') and contains(@aria-label, 'Easy')]",
+                        ".//button[contains(@class,'jobs-apply-button') and .//span[contains(normalize-space(),'Easy Apply')] ]",
+                    ]
+                    easy_apply_found = False
+                    for selector in easy_apply_selectors:
+                        if try_xp(driver, selector):
+                            easy_apply_found = True
+                            break
                     # Case 1: Easy Apply Button
-                    if try_xp(driver, ".//button[contains(@class,'jobs-apply-button') and contains(@class, 'artdeco-button--3') and contains(@aria-label, 'Easy')]"):
+                    if easy_apply_found:
                         try: 
                             try:
                                 errored = ""
@@ -1013,26 +1311,36 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                                 resume = "Previous resume"
                                 next_button = True
                                 questions_list = set()
+                                needs_manual_help = False
                                 next_counter = 0
                                 while next_button:
                                     next_counter += 1
                                     if next_counter >= 15: 
                                         if pause_at_failed_question:
                                             screenshot(driver, job_id, "Needed manual intervention for failed question")
-                                            pyautogui.alert("Couldn't answer one or more questions.\nPlease click \"Continue\" once done.\nDO NOT CLICK Back, Next or Review button in LinkedIn.\n\n\n\n\nYou can turn off \"Pause at failed question\" setting in config.py", "Help Needed", "Continue")
-                                            next_counter = 1
+                                            wait_for_manual_intervention(job_id, questions_list, "stuck on an Easy Apply step")
+                                            modal = find_by_class(driver, "jobs-easy-apply-modal")
+                                            next_counter = 0
                                             continue
                                         if questions_list: print_lg("Stuck for one or some of the following questions...", questions_list)
                                         screenshot_name = screenshot(driver, job_id, "Failed at questions")
                                         errored = "stuck"
                                         raise Exception("Seems like stuck in a continuous loop of next, probably because of new questions.")
-                                    questions_list = answer_questions(modal, questions_list, work_location, job_description=description)
-                                    if useNewResume and not uploaded: uploaded, resume = upload_resume(modal, default_resume_path)
+                                    questions_list, needs_manual_help = answer_questions(modal, questions_list, work_location, job_description=description)
+                                    if needs_manual_help and pause_at_failed_question:
+                                        screenshot(driver, job_id, "Needed manual intervention for unanswered question")
+                                        wait_for_manual_intervention(job_id, questions_list, "unanswered Easy Apply question")
+                                        modal = find_by_class(driver, "jobs-easy-apply-modal")
+                                        next_counter = 0
+                                        continue
+                                    if selected_resume_path not in uploaded_resumes and not uploaded:
+                                        uploaded, resume = upload_resume(modal, selected_resume_path)
                                     try: next_button = modal.find_element(By.XPATH, './/span[normalize-space(.)="Review"]') 
                                     except NoSuchElementException:  next_button = modal.find_element(By.XPATH, './/button[contains(span, "Next")]')
+                                    human_pace()
                                     try: next_button.click()
                                     except ElementClickInterceptedException: break    # Happens when it tries to click Next button in About Company photos section
-                                    buffer(click_gap)
+                                    human_pace()
 
                             except NoSuchElementException: errored = "nose"
                             finally:
@@ -1047,7 +1355,13 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                                     pause_before_submit = False if "Disable Pause" == decision else True
                                     # try_xp(modal, ".//span[normalize-space(.)='Review']")
                                 follow_company(modal)
+                                human_pace(1)
                                 if wait_span_click(driver, "Submit application", 2, scrollTop=True): 
+                                    check_for_easy_apply_limit_message()
+                                    if dailyEasyApplyLimitReached:
+                                        print_lg("LinkedIn reported the Easy Apply daily limit during submit. Stopping the run.")
+                                        discard_job()
+                                        return
                                     date_applied = datetime.now()
                                     if not wait_span_click(driver, "Done", 2): actions.send_keys(Keys.ESCAPE).perform()
                                 elif errored != "stuck" and cur_pause_before_submit and "Yes" in pyautogui.confirm("You submitted the application, didn't you 😒?", "Failed to find Submit Application!", ["Yes", "No"]):
@@ -1077,12 +1391,18 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                         if skip: continue
 
                     submitted_jobs(job_id, title, company, work_location, work_style, description, experience_required, skills, hr_name, hr_link, resume, reposted, date_listed, date_applied, job_link, application_link, questions_list, connect_request)
-                    if uploaded:   useNewResume = False
+                    if uploaded:
+                        uploaded_resumes.add(selected_resume_path)
 
                     print_lg(f'Successfully saved "{title} | {company}" job. Job ID: {job_id} info')
+                    human_pace(2)
                     current_count += 1
                     if application_link == "Easy Applied": easy_applied_count += 1
                     else:   external_jobs_count += 1
+                    if application_link == "Easy Applied" and reached_configured_easy_apply_cap():
+                        dailyEasyApplyLimitReached = True
+                        print_lg(f'Configured Easy Apply cap reached after this submission ({easy_applied_count}/{max_daily_easy_apply}). Stopping further applications.')
+                        return
                     applied_jobs.add(job_id)
 
 
@@ -1098,14 +1418,23 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     print_lg(f"\n>-> Didn't find Page {current_page+1}. Probably at the end page of results!\n")
                     break
 
-        except (NoSuchWindowException, WebDriverException) as e:
+        except (NoSuchWindowException, InvalidSessionIdException) as e:
             print_lg("Browser window closed or session is invalid. Ending application process.", e)
             raise e # Re-raise to be caught by main
+        except StaleElementReferenceException as e:
+            print_lg("Transient stale element in job list loop. Continuing...", e)
+            continue
+        except WebDriverException as e:
+            print_lg("WebDriver transient error in job search loop. Continuing with next search term.", e)
+            critical_error_log("In Applier (WebDriver transient)", e)
+            continue
         except Exception as e:
             print_lg("Failed to find Job listings!")
             critical_error_log("In Applier", e)
             try:
-                print_lg(driver.page_source, pretty=True)
+                page_snapshot = (driver.page_source or "")[:3000]
+                print_lg(f"URL at failure: {driver.current_url}")
+                print_lg(f"Page snapshot (first 3000 chars):\n{page_snapshot}")
             except Exception as page_source_error:
                 print_lg(f"Failed to get page source, browser might have crashed. {page_source_error}")
             # print_lg(e)

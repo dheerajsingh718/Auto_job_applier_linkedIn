@@ -1,19 +1,18 @@
 '''
-Author:     Sai Vignesh Golla
-LinkedIn:   https://www.linkedin.com/in/saivigneshgolla/
+Author:     Dheeraj Singh
+LinkedIn:   https://www.linkedin.com/in/dheerajshankarsingh/
 
 Copyright (C) 2024 Sai Vignesh Golla
 
 License:    GNU Affero General Public License
             https://www.gnu.org/licenses/agpl-3.0.en.html
             
-GitHub:     https://github.com/GodsScion/Auto_job_applier_linkedIn
+GitHub:     https://github.com/dheerajsingh718/Auto_job_applier_linkedIn
 
-Support me: https://github.com/sponsors/GodsScion
+Support me: https://github.com/sponsors/dheerajsingh718
 
 version:    26.01.20.5.08
 '''
-
 
 ###################################################### CONFIGURE YOUR BOT HERE ######################################################
 
@@ -40,7 +39,7 @@ run_non_stop = False                # True or False, Note: True or False are cas
 '''
 Note: Will be treated as False if `run_in_background = True`
 '''
-alternate_sortby = True             # True or False, Note: True or False are case-sensitive
+alternate_sortby = True             # True or False  Note: True or False are case-sensitive
 cycle_date_posted = True            # True or False, Note: True or False are case-sensitive
 stop_date_cycle_at_24hr = True      # True or False, Note: True or False are case-sensitive
 
@@ -65,7 +64,11 @@ failed_file_name = "all excels/all_failed_applications_history.csv"
 logs_folder_path = "logs/"
 
 # Set the maximum amount of time allowed to wait between each click in secs
-click_gap = 1                       # Enter max allowed secs to wait approximately. (Only Non Negative Integers Eg: 0,1,2,3,....)
+click_gap = 3                       # Enter max allowed secs to wait approximately. (Only Non Negative Integers Eg: 0,1,2,3,....)
+
+# Hard cap for Easy Apply submissions in a single day/run.
+# Set to 0 to disable the cap.
+max_daily_easy_apply = 25           # Recommended safer range: 20-40
 
 # If you want to see Chrome running then set run_in_background as False (May reduce performance). 
 run_in_background = False           # True or False, Note: True or False are case-sensitive ,   If True, this will make pause_at_failed_question, pause_before_submit and run_in_background as False
@@ -77,7 +80,7 @@ disable_extensions = False          # True or False, Note: True or False are cas
 safe_mode = True                    # True or False, Note: True or False are case-sensitive
 
 # Do you want scrolling to be smooth or instantaneous? (Can reduce performance if True)
-smooth_scroll = False               # True or False, Note: True or False are case-sensitive
+smooth_scroll = True               # True or False, Note: True or False are case-sensitive
 
 # If enabled (True), the program would keep your screen active and prevent PC from sleeping. Instead you could disable this feature (set it to false) and adjust your PC sleep settings to Never Sleep or a preferred time. 
 keep_screen_awake = True            # True or False, Note: True or False are case-sensitive (Note: Will temporarily deactivate when any application dialog boxes are present (Eg: Pause before submit, Help needed for a question..))
@@ -114,6 +117,6 @@ As an independent developer, I pour my heart and soul into creating tools like t
 Your support, whether through donations big or small or simply spreading the word, means the world to me and helps keep this project alive and thriving.
 
 Gratefully yours 🙏🏻,
-Sai Vignesh Golla
+Dheeraj Singh
 '''
 ############################################################################################################
