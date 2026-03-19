@@ -21,14 +21,14 @@ version:    26.01.20.5.08
 # >>>>>>>>>>> Easy Apply Questions & Inputs <<<<<<<<<<<
 
 # Give an relative path of your default resume to be uploaded. If file in not found, will continue using your previously uploaded resume in LinkedIn.
-default_resume_path = "all resumes/default/Dheeraj Singh Shankar DS V2.pdf"      # (In Development)
+default_resume_path = "all resumes/default/Dheeraj Singh Shankar.pdf"      # (In Development)
 
 # Optional: use different resumes for different job titles.
 # Format:
 # "comma separated keywords": "path/to/resume.pdf"
 # The first matching keyword set wins; if no match is found, `default_resume_path` is used.
 role_based_resumes = {
-    "data scientist, senior data scientist, junior data scientist, applied scientist, research scientist, machine learning scientist, machine learning engineer, ml engineer, ai engineer, artificial intelligence engineer, ai/ml engineer, generative ai engineer, genai engineer, llm engineer, nlp engineer, computer vision engineer, deep learning engineer, prompt engineer, data engineer, mlops engineer, ml ops engineer, ai platform engineer, applied ml engineer": "all resumes/default/Dheeraj Singh Shankar DS V2.pdf",
+    "data scientist, senior data scientist, junior data scientist, applied scientist, research scientist, machine learning scientist, machine learning engineer, ml engineer, ai engineer, artificial intelligence engineer, ai/ml engineer, generative ai engineer, genai engineer, llm engineer, prompt engineer, data engineer, mlops engineer, ml ops engineer, ai platform engineer, applied ml engineer": "all resumes/default/Dheeraj Singh Shankar.pdf",
     "data analyst, senior data analyst, business intelligence analyst, analytics engineer, product data analyst, quantitative analyst": "all resumes/default/Dheeraj Singh DA.pdf",
 }
 

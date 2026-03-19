@@ -15,7 +15,7 @@ version:    26.01.20.5.08
 '''
 
 from config.settings import click_gap, smooth_scroll
-from modules.helpers import buffer, print_lg, sleep
+from modules.helpers import buffer, print_lg, sleep, suppress_manual_intervention_for
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -39,6 +39,7 @@ def wait_span_click(driver: WebDriver, text: str, time: float=5.0, click: bool=T
             button = WebDriverWait(driver,time).until(EC.presence_of_element_located((By.XPATH, './/span[normalize-space(.)="'+text+'"]')))
             if scroll:  scroll_to_view(driver, button, scrollTop)
             if click:
+                suppress_manual_intervention_for(1.5)
                 button.click()
                 buffer(click_gap)
             return button
@@ -59,6 +60,7 @@ def multi_sel(driver: WebDriver, texts: list, time: float=5.0) -> None:
         try:
             button = WebDriverWait(driver,time).until(EC.presence_of_element_located((By.XPATH, './/span[normalize-space(.)="'+text+'"]')))
             scroll_to_view(driver, button)
+            suppress_manual_intervention_for(1.5)
             button.click()
             buffer(click_gap)
         except Exception as e:
@@ -75,6 +77,7 @@ def multi_sel_noWait(driver: WebDriver, texts: list, actions: ActionChains = Non
         try:
             button = driver.find_element(By.XPATH, './/span[normalize-space(.)="'+text+'"]')
             scroll_to_view(driver, button)
+            suppress_manual_intervention_for(1.5)
             button.click()
             buffer(click_gap)
         except Exception as e:
@@ -90,6 +93,7 @@ def boolean_button_click(driver: WebDriver, actions: ActionChains, text: str) ->
         list_container = driver.find_element(By.XPATH, './/h3[normalize-space()="'+text+'"]/ancestor::fieldset')
         button = list_container.find_element(By.XPATH, './/input[@role="switch"]')
         scroll_to_view(driver, button)
+        suppress_manual_intervention_for(1.5)
         actions.move_to_element(button).click().perform()
         buffer(click_gap)
     except Exception as e:
@@ -128,6 +132,7 @@ def text_input_by_ID(driver: WebDriver, id: str, value: str, time: float=5.0) ->
 def try_xp(driver: WebDriver, xpath: str, click: bool=True) -> WebElement | bool:
     try:
         if click:
+            suppress_manual_intervention_for(1.5)
             driver.find_element(By.XPATH, xpath).click()
             return True
         else:
@@ -153,7 +158,9 @@ def company_search_click(driver: WebDriver, actions: ActionChains, companyName: 
     search.send_keys(Keys.CONTROL + "a")
     search.send_keys(companyName)
     buffer(3)
+    suppress_manual_intervention_for(1.0)
     actions.send_keys(Keys.DOWN).perform()
+    suppress_manual_intervention_for(1.0)
     actions.send_keys(Keys.ENTER).perform()
     print_lg(f'Tried searching and adding "{companyName}"')
 
@@ -164,6 +171,7 @@ def text_input(actions: ActionChains, textInputEle: WebElement | bool, value: st
         textInputEle.clear()
         textInputEle.send_keys(value.strip())
         sleep(2)
+        suppress_manual_intervention_for(1.0)
         actions.send_keys(Keys.ENTER).perform()
     else:
         print_lg(f'{textFieldName} input was not given!')

@@ -66,6 +66,10 @@ logs_folder_path = "logs/"
 # Set the maximum amount of time allowed to wait between each click in secs
 click_gap = 3                       # Enter max allowed secs to wait approximately. (Only Non Negative Integers Eg: 0,1,2,3,....)
 
+# Pause workflow when manual mouse movement is detected in the automation browser window.
+manual_intervention_pause = True    # True or False, Note: True or False are case-sensitive
+manual_pause_mouse_threshold = 10   # Mouse movement threshold in pixels before auto-pausing (Only Non Negative Integers)
+
 # Hard cap for Easy Apply submissions in a single day/run.
 # Set to 0 to disable the cap.
 max_daily_easy_apply = 25           # Recommended safer range: 20-40

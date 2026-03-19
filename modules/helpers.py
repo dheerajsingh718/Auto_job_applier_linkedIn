@@ -21,10 +21,12 @@ import os
 import sys
 import json
 import pathlib
+import time
 
 from time import sleep
 from random import randint
 from datetime import datetime, timedelta
+from typing import Callable
 from pyautogui import alert
 from pprint import pprint
 
@@ -33,6 +35,31 @@ from config.settings import logs_folder_path
 
 
 #### Common functions ####
+__buffer_hook = None
+__manual_intervention_ignore_until = 0.0
+
+
+def set_buffer_hook(hook: Callable | None) -> None:
+    '''
+    Set a callback that runs before each `buffer()` wait.
+    '''
+    global __buffer_hook
+    __buffer_hook = hook
+
+
+def suppress_manual_intervention_for(seconds: float = 1.0) -> None:
+    '''
+    Ignore manual intervention detection briefly around bot-driven clicks.
+    '''
+    global __manual_intervention_ignore_until
+    __manual_intervention_ignore_until = max(__manual_intervention_ignore_until, time.time() + max(seconds, 0))
+
+
+def manual_intervention_is_suppressed() -> bool:
+    '''
+    Returns True while bot-driven click suppression is active.
+    '''
+    return time.time() < __manual_intervention_ignore_until
 
 #< Directories related
 def make_directories(paths: list[str]) -> None:
@@ -156,6 +183,12 @@ def buffer(speed: int=0) -> None:
       - `1.0 to 1.8 secs` if `2 <= speed < 3`
       - `1.8 to speed secs` if `3 <= speed`
     '''
+    try:
+        if callable(__buffer_hook):
+            __buffer_hook()
+    except Exception:
+        pass
+
     if speed<=0:
         return
     elif speed <= 1 and speed < 2:
@@ -284,3 +317,26 @@ def truncate_for_csv(data, max_length: int = 131000, suffix: str = "...[TRUNCATE
         return truncated
     except Exception as e:
         return f"[ERROR CONVERTING DATA: {e}]"
+
+
+def format_csv_datetime(value) -> str:
+    '''
+    Normalize datetime-like values for CSV output.
+    * datetime/date -> "YYYY-MM-DD HH:MM:SS"
+    * None -> "Unknown"
+    * string/other -> string as-is
+    '''
+    if value is None:
+        return "Unknown"
+
+    if isinstance(value, datetime):
+        return value.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Handle date values without importing date explicitly.
+    if hasattr(value, "strftime"):
+        try:
+            return value.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+
+    return str(value)

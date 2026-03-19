@@ -207,6 +207,8 @@ def validate_settings() -> None | ValueError | TypeError:
     check_string(logs_folder_path, "logs_folder_path", min_length=1)
 
     check_int(click_gap, "click_gap", 0)
+    check_boolean(manual_intervention_pause, "manual_intervention_pause")
+    check_int(manual_pause_mouse_threshold, "manual_pause_mouse_threshold", 0)
 
     check_boolean(run_in_background, "run_in_background")
     check_boolean(disable_extensions, "disable_extensions")
@@ -232,4 +234,3 @@ def validate_config() -> bool | ValueError | TypeError:
     # validate_String(chatGPT_password, "chatGPT_password")
     # validate_String(chatGPT_resume_chat_title, "chatGPT_resume_chat_title")
     return True
-

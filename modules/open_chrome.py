@@ -19,16 +19,16 @@ from config.settings import run_in_background, stealth_mode, disable_extensions,
 from config.questions import default_resume_path
 import subprocess
 import re
+import tempfile
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+# from selenium.webdriver.chrome.service import Service
 if stealth_mode:
     import undetected_chromedriver as uc
-else: 
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    # from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from modules.helpers import find_default_profile_directory, critical_error_log, print_lg
-from selenium.common.exceptions import SessionNotCreatedException
+from selenium.common.exceptions import SessionNotCreatedException, NoSuchWindowException, WebDriverException
 
 def get_installed_chrome_major_version() -> int | None:
     """
@@ -52,28 +52,55 @@ def get_installed_chrome_major_version() -> int | None:
             continue
     return None
 
-def createChromeSession(isRetry: bool = False):
-    make_directories([file_name,failed_file_name,logs_folder_path+"/screenshots",default_resume_path,generated_resume_path+"/temp"])
-    # Set up WebDriver with Chrome Profile
-    options = uc.ChromeOptions() if stealth_mode else Options()
+def get_session_temp_profile() -> str:
+    '''
+    Create an isolated Chrome user-data-dir for this run.
+    Reusing a shared temp profile is a common cause of Chrome startup exits.
+    '''
+    return tempfile.mkdtemp(prefix="auto-job-apply-chrome-")
+
+
+def build_chrome_options(options_cls, isRetry: bool = False):
+    options = options_cls()
     if run_in_background:   options.add_argument("--headless")
     if disable_extensions:  options.add_argument("--disable-extensions")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-renderer-backgrounding")
 
     print_lg("IF YOU HAVE MORE THAN 10 TABS OPENED, PLEASE CLOSE OR BOOKMARK THEM! Or it's highly likely that application will just open browser and not do anything!")
     profile_dir = find_default_profile_directory()
     if isRetry:
         print_lg("Will login with a guest profile, browsing history will not be saved in the browser!")
+        temp_profile = get_session_temp_profile()
+        print_lg(f"Using isolated temporary Chrome profile: {temp_profile}")
+        options.add_argument(f"--user-data-dir={temp_profile}")
     elif profile_dir and not safe_mode:
         options.add_argument(f"--user-data-dir={profile_dir}")
     else:
         print_lg("Logging in with a guest profile, Web history will not be saved!")
-        options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
+        temp_profile = get_session_temp_profile()
+        print_lg(f"Using isolated temporary Chrome profile: {temp_profile}")
+        options.add_argument(f"--user-data-dir={temp_profile}")
+    return options
+
+
+def create_standard_chrome_session(isRetry: bool = False):
+    options = build_chrome_options(Options, isRetry)
+    driver = webdriver.Chrome(options=options)
+    return options, driver
+
+
+def createChromeSession(isRetry: bool = False):
+    make_directories([file_name,failed_file_name,logs_folder_path+"/screenshots",default_resume_path,generated_resume_path+"/temp"])
+    # Set up WebDriver with Chrome Profile
+    options = None
     if stealth_mode:
-        # try: 
-        #     driver = uc.Chrome(driver_executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe", options=options)
-        # except (FileNotFoundError, PermissionError) as e: 
-        #     print_lg("(Undetected Mode) Got '{}' when using pre-installed ChromeDriver.".format(type(e).__name__)) 
-            print_lg("Downloading Chrome Driver... This may take some time. Undetected mode requires download every run!")
+        options = build_chrome_options(uc.ChromeOptions, isRetry)
+        print_lg("Downloading Chrome Driver... This may take some time. Undetected mode requires download every run!")
+        try:
             detected_major = get_installed_chrome_major_version()
             if detected_major:
                 print_lg(f"Detected local Chrome major version: {detected_major}")
@@ -81,8 +108,16 @@ def createChromeSession(isRetry: bool = False):
             else:
                 print_lg("Could not detect local Chrome version. Falling back to uc default version selection.")
                 driver = uc.Chrome(options=options)
-    else: driver = webdriver.Chrome(options=options) #, service=Service(executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe"))
-    driver.maximize_window()
+        except (SessionNotCreatedException, WebDriverException) as e:
+            print_lg("Undetected Chrome startup failed. Falling back to regular Selenium Chrome.", e)
+            options, driver = create_standard_chrome_session(isRetry)
+    else:
+        options, driver = create_standard_chrome_session(isRetry) #, service=Service(executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe"))
+    try:
+        driver.maximize_window()
+    except (NoSuchWindowException, WebDriverException) as e:
+        print_lg("Chrome window could not be maximized. Falling back to a fixed window size.", e)
+        driver.set_window_size(1440, 900)
     wait = WebDriverWait(driver, 5)
     actions = ActionChains(driver)
     return options, driver, actions, wait

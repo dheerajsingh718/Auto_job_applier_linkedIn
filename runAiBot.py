@@ -20,6 +20,7 @@ import os
 import csv
 import re
 import time
+import subprocess
 import pyautogui
 
 # Set CSV field size limit to prevent field size errors
@@ -80,6 +81,7 @@ external_jobs_count = 0
 failed_count = 0
 skip_count = 0
 dailyEasyApplyLimitReached = False
+manual_pause_last_mouse_pos = None
 
 re_experience = re.compile(r'[(]?\s*(\d+)\s*[)]?\s*[-to]*\s*\d*[+]*\s*year[s]?', re.IGNORECASE)
 
@@ -144,10 +146,12 @@ def login_LN() -> None:
             print_lg("Couldn't find password field.")
             # print_lg(e)
         # Find the login submit button and click it
+        suppress_manual_intervention_for(1.5)
         driver.find_element(By.XPATH, '//button[@type="submit" and contains(text(), "Sign in")]').click()
     except Exception as e1:
         try:
             profile_button = find_by_class(driver, "profile__details")
+            suppress_manual_intervention_for(1.5)
             profile_button.click()
         except Exception as e2:
             # print_lg(e1, e2)
@@ -193,15 +197,96 @@ def set_search_location() -> None:
             text_input(actions, search_location_ele, search_location, "Search Location")
         except ElementNotInteractableException:
             try_xp(driver, ".//label[@class='jobs-search-box__input-icon jobs-search-box__keywords-label']")
+            suppress_manual_intervention_for(1.0)
             actions.send_keys(Keys.TAB, Keys.TAB).perform()
+            suppress_manual_intervention_for(1.0)
             actions.key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
+            suppress_manual_intervention_for(1.0)
             actions.send_keys(search_location.strip()).perform()
             sleep(2)
+            suppress_manual_intervention_for(1.0)
             actions.send_keys(Keys.ENTER).perform()
             try_xp(driver, ".//button[@aria-label='Cancel']")
         except Exception as e:
             try_xp(driver, ".//button[@aria-label='Cancel']")
             print_lg("Failed to update search location, continuing with default location!", e)
+
+
+def click_filter_option_if_present(text: str, timeout: float = 2.0) -> bool:
+    '''
+    Best-effort click for top-bar and modal filter options.
+    Missing options are treated as non-fatal because LinkedIn renders
+    different controls depending on UI version and account state.
+    '''
+    if not text:
+        return False
+    if wait_span_click(driver, text, timeout):
+        return True
+    print_lg(f'Optional filter "{text}" not available in current LinkedIn UI. Skipping.')
+    return False
+
+
+def classify_filter_ui() -> str:
+    '''
+    Detect which LinkedIn filter flow is currently rendered.
+    Returns one of:
+    * "inline_only" - top bar only, no filters modal open
+    * "modal_with_submit" - filters modal open and explicit apply/show-results CTA present
+    * "modal_without_submit" - filters modal open but explicit submit CTA not found
+    '''
+    try:
+        modal = driver.find_element(By.XPATH, '//div[contains(@class,"jobs-search-box__all-filters")] | //div[@role="dialog" and .//button]')
+    except Exception:
+        return "inline_only"
+
+    submit_selectors = [
+        './/button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "apply current filters to show")]',
+        './/button[.//span[normalize-space()="Show results"]]',
+        './/button[normalize-space()="Show results"]',
+        './/button[.//span[normalize-space()="Apply"]]',
+        './/button[normalize-space()="Apply"]',
+    ]
+    for selector in submit_selectors:
+        try:
+            modal.find_element(By.XPATH, selector)
+            return "modal_with_submit"
+        except Exception:
+            continue
+    return "modal_without_submit"
+
+
+def find_filter_submit_button() -> WebElement | None:
+    '''
+    Find the most likely modal submit CTA across LinkedIn filter variants.
+    '''
+    selectors = [
+        '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "apply current filters to show")]',
+        '//button[.//span[normalize-space()="Show results"]]',
+        '//button[normalize-space()="Show results"]',
+        '//button[.//span[normalize-space()="Apply"]]',
+        '//button[normalize-space()="Apply"]',
+    ]
+    for selector in selectors:
+        try:
+            return driver.find_element(By.XPATH, selector)
+        except Exception:
+            continue
+    return None
+
+
+def open_all_filters_if_available() -> bool:
+    '''
+    Open the filters modal when available. Missing button is non-fatal because
+    newer LinkedIn layouts expose key filters inline.
+    '''
+    try:
+        all_filters_button = wait.until(EC.presence_of_element_located((By.XPATH, '//button[normalize-space()="All filters"]')))
+        suppress_manual_intervention_for(1.5)
+        all_filters_button.click()
+        return True
+    except Exception:
+        print_lg('Optional "All filters" button not available. Continuing with inline filters only.')
+        return False
 
 
 def apply_filters() -> None:
@@ -212,45 +297,54 @@ def apply_filters() -> None:
 
     try:
         recommended_wait = 1 if click_gap < 1 else 0
-
-        wait.until(EC.presence_of_element_located((By.XPATH, '//button[normalize-space()="All filters"]'))).click()
+        modal_opened = open_all_filters_if_available()
         buffer(recommended_wait)
 
-        wait_span_click(driver, sort_by)
-        wait_span_click(driver, date_posted)
+        click_filter_option_if_present(sort_by)
+        click_filter_option_if_present(date_posted)
         buffer(recommended_wait)
 
-        multi_sel_noWait(driver, experience_level) 
-        multi_sel_noWait(driver, companies, actions)
-        if experience_level or companies: buffer(recommended_wait)
+        if modal_opened:
+            multi_sel_noWait(driver, experience_level) 
+            multi_sel_noWait(driver, companies, actions)
+            if experience_level or companies: buffer(recommended_wait)
 
-        multi_sel_noWait(driver, job_type)
-        multi_sel_noWait(driver, on_site)
-        if job_type or on_site: buffer(recommended_wait)
+            multi_sel_noWait(driver, job_type)
+            multi_sel_noWait(driver, on_site)
+            if job_type or on_site: buffer(recommended_wait)
 
-        if easy_apply_only: boolean_button_click(driver, actions, "Easy Apply")
-        
-        multi_sel_noWait(driver, location)
-        multi_sel_noWait(driver, industry)
-        if location or industry: buffer(recommended_wait)
+            if easy_apply_only:
+                boolean_button_click(driver, actions, "Easy Apply")
+            
+            multi_sel_noWait(driver, location)
+            multi_sel_noWait(driver, industry)
+            if location or industry: buffer(recommended_wait)
 
-        multi_sel_noWait(driver, job_function)
-        multi_sel_noWait(driver, job_titles)
-        if job_function or job_titles: buffer(recommended_wait)
+            multi_sel_noWait(driver, job_function)
+            multi_sel_noWait(driver, job_titles)
+            if job_function or job_titles: buffer(recommended_wait)
 
-        if under_10_applicants: boolean_button_click(driver, actions, "Under 10 applicants")
-        if in_your_network: boolean_button_click(driver, actions, "In your network")
-        if fair_chance_employer: boolean_button_click(driver, actions, "Fair Chance Employer")
+            if under_10_applicants: boolean_button_click(driver, actions, "Under 10 applicants")
+            if in_your_network: boolean_button_click(driver, actions, "In your network")
+            if fair_chance_employer: boolean_button_click(driver, actions, "Fair Chance Employer")
 
-        wait_span_click(driver, salary)
-        buffer(recommended_wait)
-        
-        multi_sel_noWait(driver, benefits)
-        multi_sel_noWait(driver, commitments)
-        if benefits or commitments: buffer(recommended_wait)
+            click_filter_option_if_present(salary)
+            buffer(recommended_wait)
+            
+            multi_sel_noWait(driver, benefits)
+            multi_sel_noWait(driver, commitments)
+            if benefits or commitments: buffer(recommended_wait)
 
-        show_results_button: WebElement = driver.find_element(By.XPATH, '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "apply current filters to show")]')
-        show_results_button.click()
+        ui_mode = classify_filter_ui()
+        if ui_mode == "modal_with_submit":
+            show_results_button = find_filter_submit_button()
+            if show_results_button:
+                suppress_manual_intervention_for(1.5)
+                show_results_button.click()
+            else:
+                print_lg("Filter modal submit button disappeared before click. Continuing assuming filters were applied.")
+        elif ui_mode == "modal_without_submit":
+            print_lg("Filter modal has no explicit submit button in this LinkedIn UI. Continuing assuming inline apply behavior.")
 
         global pause_after_filters
         if pause_after_filters and "Turn off Pause after search" == pyautogui.confirm("These are your configured search results and filter. It is safe to change them while this dialog is open, any changes later could result in errors and skipping this search run.", "Please check your results", ["Turn off Pause after search", "Look's good, Continue"]):
@@ -258,7 +352,11 @@ def apply_filters() -> None:
 
     except Exception as e:
         print_lg("Setting the preferences failed!")
-        pyautogui.confirm(f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog, I know it sucks. Can't turn off Pause after search when error occurs! ERROR: {e}", ["Doesn't look good, but Continue XD", "Look's good, Continue"])
+        pyautogui.confirm(
+            f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog, I know it sucks. Can't turn off Pause after search when error occurs! ERROR: {e}",
+            "Filter Application Error",
+            ["Doesn't look good, but Continue XD", "Look's good, Continue"],
+        )
         # print_lg(e)
 
 
@@ -613,6 +711,134 @@ def location_answer_for_label(label: str, work_location: str) -> str:
         return current_city if current_city else work_location
     return current_city if current_city else work_location
 
+def initialize_manual_intervention_monitor() -> None:
+    '''
+    Stores the current mouse position as baseline for manual intervention detection.
+    '''
+    global manual_pause_last_mouse_pos
+    if not manual_intervention_pause or run_in_background:
+        manual_pause_last_mouse_pos = None
+        return
+    try:
+        point = pyautogui.position()
+        manual_pause_last_mouse_pos = (point.x, point.y)
+    except Exception:
+        manual_pause_last_mouse_pos = None
+
+
+def is_automation_window_foreground() -> bool:
+    '''
+    Returns True only when the Selenium-controlled Chrome window appears to be
+    the frontmost window on macOS.
+    '''
+    if os.name != "posix":
+        return True
+
+    try:
+        front_app = subprocess.check_output(
+            [
+                "osascript",
+                "-e",
+                'tell application "System Events" to get name of first application process whose frontmost is true',
+            ],
+            text=True,
+        ).strip()
+        if front_app != "Google Chrome":
+            return False
+
+        front_bounds = subprocess.check_output(
+            [
+                "osascript",
+                "-e",
+                'tell application "Google Chrome" to get bounds of front window',
+            ],
+            text=True,
+        ).strip()
+        front_url = subprocess.check_output(
+            [
+                "osascript",
+                "-e",
+                'tell application "Google Chrome" to get URL of active tab of front window',
+            ],
+            text=True,
+        ).strip()
+
+        rect = driver.get_window_rect()
+        expected_bounds = [
+            int(rect.get("x", 0)),
+            int(rect.get("y", 0)),
+            int(rect.get("x", 0)) + int(rect.get("width", 0)),
+            int(rect.get("y", 0)) + int(rect.get("height", 0)),
+        ]
+        actual_bounds = [int(part.strip()) for part in front_bounds.split(",")]
+        bounds_match = len(actual_bounds) == 4 and all(abs(a - b) <= 5 for a, b in zip(actual_bounds, expected_bounds))
+
+        return bounds_match and front_url == driver.current_url
+    except Exception:
+        return True
+
+
+def check_for_manual_intervention() -> None:
+    '''
+    Auto-pause when user manually moves mouse beyond configured threshold.
+    Resume after Enter in terminal.
+    '''
+    global manual_pause_last_mouse_pos
+    if not manual_intervention_pause or run_in_background:
+        return
+
+    try:
+        point = pyautogui.position()
+        current_pos = (point.x, point.y)
+    except Exception:
+        return
+
+    try:
+        rect = driver.get_window_rect()
+        win_x = int(rect.get("x", 0))
+        win_y = int(rect.get("y", 0))
+        win_w = int(rect.get("width", 0))
+        win_h = int(rect.get("height", 0))
+        is_inside_window = (win_x <= current_pos[0] <= win_x + win_w and win_y <= current_pos[1] <= win_y + win_h)
+    except Exception:
+        return
+
+    if not is_inside_window:
+        manual_pause_last_mouse_pos = None
+        return
+
+    if not is_automation_window_foreground():
+        manual_pause_last_mouse_pos = current_pos
+        return
+
+    if manual_pause_last_mouse_pos is None:
+        manual_pause_last_mouse_pos = current_pos
+        return
+
+    dx = abs(current_pos[0] - manual_pause_last_mouse_pos[0])
+    dy = abs(current_pos[1] - manual_pause_last_mouse_pos[1])
+    if dx < manual_pause_mouse_threshold and dy < manual_pause_mouse_threshold:
+        manual_pause_last_mouse_pos = current_pos
+        return
+
+    print(
+        "\nManual intervention detected (mouse movement).\n"
+        "Bot is paused.\n"
+        "Return to terminal and press Enter to resume.\n"
+    )
+    try:
+        input("Press Enter to resume bot workflow...")
+    except EOFError:
+        print_lg("Terminal input unavailable during manual pause. Waiting 5 seconds before retry.")
+        sleep(5)
+    finally:
+        try:
+            point = pyautogui.position()
+            manual_pause_last_mouse_pos = (point.x, point.y)
+        except Exception:
+            manual_pause_last_mouse_pos = current_pos
+
+
 def human_pace(extra_seconds: int = 0) -> None:
     '''
     Adds a more human-like delay on top of click_gap.
@@ -806,6 +1032,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                         answer = "Yes"
                 foundOption = try_xp(radio, f".//label[normalize-space()='{answer}']", False)
                 if foundOption: 
+                    suppress_manual_intervention_for(1.5)
                     actions.move_to_element(foundOption).click().perform()
                 else:    
                     possible_answer_phrases = ["Decline", "not wish", "don't wish", "Prefer not", "not want"] if answer == 'Decline' else [answer]
@@ -827,6 +1054,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     #             answer = f'Decline ({phrase})'
                     #             ele = foundOption
                     #             break
+                    suppress_manual_intervention_for(1.5)
                     actions.move_to_element(ele).click().perform()
                     if not foundOption: randomly_answered_questions.add((f'{label_org} ]',"radio"))
             else: answer = prev_answer
@@ -931,6 +1159,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 if do_actions:
                     sleep(2)
                     actions.send_keys(Keys.ARROW_DOWN)
+                    suppress_manual_intervention_for(1.0)
                     actions.send_keys(Keys.ENTER).perform()
             questions_list.add((label, text.get_attribute("value"), "text", prev_answer))
             continue
@@ -985,6 +1214,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             if do_actions:
                     sleep(2)
                     actions.send_keys(Keys.ARROW_DOWN)
+                    suppress_manual_intervention_for(1.0)
                     actions.send_keys(Keys.ENTER).perform()
             questions_list.add((label, text_area.get_attribute("value"), "textarea", prev_answer))
             ##<
@@ -1002,6 +1232,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             checked = prev_answer
             if not prev_answer:
                 try:
+                    suppress_manual_intervention_for(1.5)
                     actions.move_to_element(checkbox).click().perform()
                     checked = True
                 except Exception as e: 
@@ -1035,6 +1266,7 @@ def external_apply(pagination_element: WebElement, job_id: str, job_link: str, r
         print_lg("Easy apply failed I guess!")
         if pagination_element != None: return True, application_link, tabs_count
     try:
+        suppress_manual_intervention_for(1.5)
         wait.until(EC.element_to_be_clickable((By.XPATH, ".//button[contains(@class,'jobs-apply-button') and contains(@class, 'artdeco-button--3')]"))).click() # './/button[contains(span, "Apply") and not(span[contains(@class, "disabled")])]'
         wait_span_click(driver, "Continue", 1, True, False)
         windows = driver.window_handles
@@ -1078,7 +1310,7 @@ def failed_job(job_id: str, job_link: str, resume: str, date_listed, error: str,
             fieldnames = ['Job ID', 'Job Link', 'Resume Tried', 'Date listed', 'Date Tried', 'Assumed Reason', 'Stack Trace', 'External Job link', 'Screenshot Name']
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             if file.tell() == 0: writer.writeheader()
-            writer.writerow({'Job ID':truncate_for_csv(job_id), 'Job Link':truncate_for_csv(job_link), 'Resume Tried':truncate_for_csv(resume), 'Date listed':truncate_for_csv(date_listed), 'Date Tried':datetime.now(), 'Assumed Reason':truncate_for_csv(error), 'Stack Trace':truncate_for_csv(exception), 'External Job link':truncate_for_csv(application_link), 'Screenshot Name':truncate_for_csv(screenshot_name)})
+            writer.writerow({'Job ID':truncate_for_csv(job_id), 'Job Link':truncate_for_csv(job_link), 'Resume Tried':truncate_for_csv(resume), 'Date listed':truncate_for_csv(format_csv_datetime(date_listed)), 'Date Tried':format_csv_datetime(datetime.now()), 'Assumed Reason':truncate_for_csv(error), 'Stack Trace':truncate_for_csv(exception), 'External Job link':truncate_for_csv(application_link), 'Screenshot Name':truncate_for_csv(screenshot_name)})
             file.close()
     except Exception as e:
         print_lg("Failed to update failed jobs list!", e)
@@ -1115,7 +1347,7 @@ def submitted_jobs(job_id: str, title: str, company: str, work_location: str, wo
             writer.writerow({'Job ID':truncate_for_csv(job_id), 'Title':truncate_for_csv(title), 'Company':truncate_for_csv(company), 'Work Location':truncate_for_csv(work_location), 'Work Style':truncate_for_csv(work_style), 
                             'About Job':truncate_for_csv(description), 'Experience required': truncate_for_csv(experience_required), 'Skills required':truncate_for_csv(skills), 
                                 'HR Name':truncate_for_csv(hr_name), 'HR Link':truncate_for_csv(hr_link), 'Resume':truncate_for_csv(resume), 'Re-posted':truncate_for_csv(reposted), 
-                                'Date Posted':truncate_for_csv(date_listed), 'Date Applied':truncate_for_csv(date_applied), 'Job Link':truncate_for_csv(job_link), 
+                                'Date Posted':truncate_for_csv(format_csv_datetime(date_listed)), 'Date Applied':truncate_for_csv(format_csv_datetime(date_applied)), 'Job Link':truncate_for_csv(job_link), 
                                 'External Job link':truncate_for_csv(application_link), 'Questions Found':truncate_for_csv(questions_list), 'Connect Request':truncate_for_csv(connect_request)})
         csv_file.close()
     except Exception as e:
@@ -1126,6 +1358,7 @@ def submitted_jobs(job_id: str, title: str, company: str, work_location: str, wo
 
 # Function to discard the job application
 def discard_job() -> None:
+    suppress_manual_intervention_for(1.0)
     actions.send_keys(Keys.ESCAPE).perform()
     wait_span_click(driver, 'Discard', 2)
 
@@ -1338,7 +1571,9 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                                     try: next_button = modal.find_element(By.XPATH, './/span[normalize-space(.)="Review"]') 
                                     except NoSuchElementException:  next_button = modal.find_element(By.XPATH, './/button[contains(span, "Next")]')
                                     human_pace()
-                                    try: next_button.click()
+                                    try:
+                                        suppress_manual_intervention_for(1.5)
+                                        next_button.click()
                                     except ElementClickInterceptedException: break    # Happens when it tries to click Next button in About Company photos section
                                     human_pace()
 
@@ -1363,7 +1598,9 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                                         discard_job()
                                         return
                                     date_applied = datetime.now()
-                                    if not wait_span_click(driver, "Done", 2): actions.send_keys(Keys.ESCAPE).perform()
+                                    if not wait_span_click(driver, "Done", 2):
+                                        suppress_manual_intervention_for(1.0)
+                                        actions.send_keys(Keys.ESCAPE).perform()
                                 elif errored != "stuck" and cur_pause_before_submit and "Yes" in pyautogui.confirm("You submitted the application, didn't you 😒?", "Failed to find Submit Application!", ["Yes", "No"]):
                                     date_applied = datetime.now()
                                     wait_span_click(driver, "Done", 2)
@@ -1412,6 +1649,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     print_lg("Couldn't find pagination element, probably at the end page of results!")
                     break
                 try:
+                    suppress_manual_intervention_for(1.5)
                     pagination_element.find_element(By.XPATH, f"//button[@aria-label='Page {current_page+1}']").click()
                     print_lg(f"\n>-> Now on Page {current_page+1} \n")
                 except NoSuchElementException:
@@ -1469,6 +1707,8 @@ def main() -> None:
         global linkedIn_tab, tabs_count, useNewResume, aiClient
         alert_title = "Error Occurred. Closing Browser!"
         validate_config()
+        initialize_manual_intervention_monitor()
+        set_buffer_hook(check_for_manual_intervention if manual_intervention_pause and not run_in_background else None)
         
         if not os.path.exists(default_resume_path):
             pyautogui.alert(text='Your default resume "{}" is missing! Please update it\'s folder path "default_resume_path" in config.py\n\nOR\n\nAdd a resume with exact name and path (check for spelling mistakes including cases).\n\n\nFor now the bot will continue using your previous upload from LinkedIn!'.format(default_resume_path), title="Missing Resume", button="OK")
